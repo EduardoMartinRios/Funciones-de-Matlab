@@ -1,0 +1,112 @@
+%% function [vrSweep, vrSingleSweep,iNumOfRepetitions, rInterSweepInterval] = GenerateExponentialSweep(rSweepTimeDuration, rfadeOutTime, vrFrequencyRange, rFs, iNumOfRepetitions, rInterSweepInterval)
+%
+% Generate a swept sinusoidal signal as recommended in:
+% Farina, Angelo. "Advancements in impulse response measurements by sine sweeps."
+% Audio Engineering Society Convention 122. Audio Engineering Society, 2007.
+%
+%% Input parameters:
+%       
+%           rSweepTimeDuration : sweep time in seconds
+%           rfadeOutTime :  gradual decrease time of the envelope in seconds. The default is 10 ms.
+%           vrFrequencyRange : frequency range of interest
+%           rFs : sampling frequency in Hz
+%           iNumOfRepetitions : number of sweep in the test signal
+%           rInterSweepInterval : separation time between sweeps in the test signal
+%
+%% Output parameters:
+%
+%           vrSweep : Test signal containing the sweeps
+%           vrSingleSweep : The used single sweep 
+%           iNumOfRepetitions : Number of sweeps in the test signal
+%           rInterSweepInterval : Separation time between sweeps in the test signal
+%
+% NSL 21 de octubre 2021
+
+function [vrSweep, vrSingleSweep, iNumOfRepetitions, rInterSweepInterval] = GenerateExponentialSweep(rSweepTimeDuration, rfadeOutTime, vrFrequencyRange, rFs, iNumOfRepetitions, rInterSweepInterval)
+%% Check the input parameters
+
+if (nargin < 2)
+    rfadeOutTime = 0.1;
+end
+
+if (nargin < 3)
+    vrFrequencyRange = [20 24e3];
+end
+
+if (nargin < 4)
+    rFs = 2 * vrFrequencyRange(2);
+end
+
+if (rFs < 2 * vrFrequencyRange(2))
+    error('Function GenerateExponentialSweep: Sampling frequency is below half the maximum signal frequency.');
+end
+
+if (nargin < 5)
+    iNumOfRepetitions = 1;
+end
+
+if (nargin < 6)
+    rInterSweepInterval = rSweepTimeDuration;
+end
+
+%%  Generate instantaneous phase for one sweep
+vrSweepTime = 0 : 1/rFs : rSweepTimeDuration;
+
+vrInstantFrequency1 = vrFrequencyRange(1) .* (vrFrequencyRange(2) / vrFrequencyRange(1)) .^ (vrSweepTime / rSweepTimeDuration);
+
+vrInstantPhase1 = 2 * pi * cumsum([0, (vrInstantFrequency1(2 : end) + vrInstantFrequency1(1 : end -1)) / (2 * rFs)]);
+
+%% Cutoff last samples to avoid steps in output sweep
+
+vrModPhase1 = mod(vrInstantPhase1, pi);
+iLastNullPhase1 = find(sign(diff(vrModPhase1)) < 0, 1, 'last');
+vrInstantPhase1(iLastNullPhase1 + 1 : end) = 0;
+
+vrSingleSweep = sin(vrInstantPhase1);
+
+%% Apply a windowed fade out to the end of the input
+
+nFadeOutSamples = ceil(rfadeOutTime*rFs);
+nData = floor(rFs*rSweepTimeDuration)+1;
+
+window = blackman(2*nFadeOutSamples);
+vrSingleSweep(nData-nFadeOutSamples+1:nData) = vrSingleSweep(nData-nFadeOutSamples+1:nData).*window((1:nFadeOutSamples)+nFadeOutSamples)';
+
+%% Link several sweeps
+
+N = floor((rSweepTimeDuration + rInterSweepInterval) * iNumOfRepetitions * rFs);
+vrSweep = zeros(1, floor((rSweepTimeDuration + rInterSweepInterval) * iNumOfRepetitions * rFs) + 1);
+rInitialLag = rInterSweepInterval / 2;
+
+for iRepetition = 1 : iNumOfRepetitions,
+    iFirstSample = floor((rInitialLag + (rSweepTimeDuration + rInterSweepInterval) * (iRepetition - 1)) * rFs);
+    iLastSample = iFirstSample + length(vrSingleSweep) - 1;
+    
+    vrSweep(iFirstSample : iLastSample) = vrSingleSweep;
+end
+
+%% Sweep Time Plot
+
+figure
+t = (0 :1/rFs: N/rFs);
+figure(1)
+plot (t, vrSweep)
+title('Exponential sweep')
+xlabel ('Time (s)')
+
+%% Sweep Frequency Plot
+
+figure(3)
+H1 = abs(fft(vrSingleSweep));
+FreqAxisI = rFs * (0 : length(H1) - 1) / length(H1);
+loglog (FreqAxisI, abs(H1))
+grid on
+xlabel('Frequency (Hz)')
+title('Exponential sweep spectrum')
+
+%% Sweep conversion to .wav file
+
+WavSweep = 'Sweep_4_s_3.wav';
+audiowrite(WavSweep,vrSweep,rFs);
+
+end
